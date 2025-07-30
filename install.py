@@ -20,6 +20,7 @@ def check_nvidia_gpu():
     import pynvml
     from translations.translations import translate as t
     initialized = False
+    rtx50_detected = False
     try:
         pynvml.nvmlInit()
         initialized = True
@@ -30,13 +31,17 @@ def check_nvidia_gpu():
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 name = pynvml.nvmlDeviceGetName(handle)
                 print(f"GPU {i}: {name}")
-            return True
+                # 检测RTX 50系列GPU
+                if any(rtx_model in name.upper() for rtx_model in ['RTX 5080', 'RTX 5090', 'RTX 5070']):
+                    rtx50_detected = True
+                    print(f"🔥 检测到RTX 50系列GPU: {name}")
+            return True, rtx50_detected
         else:
             print(t("No NVIDIA GPU detected"))
-            return False
+            return False, False
     except pynvml.NVMLError:
         print(t("No NVIDIA GPU detected or NVIDIA drivers not properly installed"))
-        return False
+        return False, False
     finally:
         if initialized:
             pynvml.nvmlShutdown()
@@ -120,10 +125,26 @@ def main():
         choose_mirror()
 
     # Detect system and GPU
-    has_gpu = platform.system() != 'Darwin' and check_nvidia_gpu()
+    has_gpu, is_rtx50 = False, False
+    if platform.system() != 'Darwin':
+        has_gpu, is_rtx50 = check_nvidia_gpu()
+    
     if has_gpu:
-        console.print(Panel(t("🎮 NVIDIA GPU detected, installing CUDA version of PyTorch..."), style="cyan"))
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "torch==2.0.0", "torchaudio==2.0.0", "--index-url", "https://download.pytorch.org/whl/cu118"])
+        if is_rtx50:
+            console.print(Panel("🔥 检测到RTX 50系列GPU，安装兼容的PyTorch nightly版本...", style="red"))
+            # 设置RTX 50系列兼容性环境变量
+            os.environ['TORCH_CUDA_ARCH_LIST'] = '7.0 7.5 8.0 8.6 8.9 9.0+PTX'
+            os.environ['NVIDIA_ALLOW_UNSUPPORTED_ARCHS'] = 'true'
+            # 先卸载可能存在的旧版本PyTorch
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "uninstall", "torch", "torchaudio", "-y"])
+            except:
+                pass
+            # 安装nightly版本
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--pre", "torch", "torchaudio", "--index-url", "https://download.pytorch.org/whl/nightly/cu128"])
+        else:
+            console.print(Panel(t("🎮 NVIDIA GPU detected, installing CUDA version of PyTorch..."), style="cyan"))
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "torch==2.0.0", "torchaudio==2.0.0", "--index-url", "https://download.pytorch.org/whl/cu118"])
     else:
         system_name = "🍎 MacOS" if platform.system() == 'Darwin' else "💻 No NVIDIA GPU"
         console.print(Panel(t(f"{system_name} detected, installing CPU version of PyTorch... Note: it might be slow during whisperX transcription."), style="cyan"))
